@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { questionPool } from '../data/questionBank';
 
 // Fisher-Yates Shuffle to pick 20 random questions from 200
@@ -22,8 +22,21 @@ export default function TestApp() {
   const [timeLeft, setTimeLeft] = useState(600); // 10 MINUTES (600 seconds)
   const [violations, setViolations] = useState(0);
 
+  // --- REFS (Crucial for fixing the "Missing Score on Auto-Submit" bug) ---
+  const answersRef = useRef({});
+  const questionsRef = useRef([]);
+
+  // Sync state to refs so the timer closure can always access the latest values
+  useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
+
+  useEffect(() => {
+    questionsRef.current = activeQuestions;
+  }, [activeQuestions]);
+
   // REPLACE WITH YOUR GOOGLE SCRIPT URL
-  const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzBweUJ0VooWa3Gl9zNr9PvwFNne-dMnmP8yPlseY9VkUGrvB5W25YU6eIRtkMbj5i8ow/exec';
+  const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwbVxb4qlcMo_F6Eyc7ay9VTyyIDYFiQQ-Tin6njgjkTNDq_gUgNUalOmvQ4LsPyHOEaw/exec';
 
   // --- TIMER & ANTI-CHEAT ---
   useEffect(() => {
@@ -42,12 +55,13 @@ export default function TestApp() {
       document.addEventListener("contextmenu", preventActions);
       document.addEventListener("copy", preventActions);
 
-      // 2. 10 Minute Timer
+      // 2. Timer Logic
       timer = setInterval(() => {
         setTimeLeft((prev) => {
           if (prev <= 1) {
             clearInterval(timer);
-            handleSubmit(); // Auto-submit when time is up
+            // We call the calculation logic directly here to avoid stale closures
+            handleFinalSubmission();
             return 0;
           }
           return prev - 1;
@@ -69,6 +83,7 @@ export default function TestApp() {
 
     const selected = shuffleAndPick(questionPool, 20);
     setActiveQuestions(selected);
+    questionsRef.current = selected; // Update ref immediately
 
     if (document.documentElement.requestFullscreen) {
       document.documentElement.requestFullscreen().catch(() => { });
@@ -76,44 +91,53 @@ export default function TestApp() {
     setStep('test');
   };
 
-  const handleSubmit = async () => {
-    // 1. Calculate final score
+  // This function handles the logic for both Auto and Manual submit
+  const handleFinalSubmission = async () => {
+    // 1. Calculate final score using REFS (not state) to ensure accuracy
     let finalScore = 0;
-    activeQuestions.forEach((q, i) => {
-      if (answers[i] === q.correct) finalScore++;
+    const currentQuestions = questionsRef.current;
+    const currentAnswers = answersRef.current;
+
+    currentQuestions.forEach((q, i) => {
+      if (currentAnswers[i] === q.correct) {
+        finalScore++;
+      }
     });
 
-    // 2. Clear UI
+    // 2. Calculate Percentage (Score over 20 * 100)
+    const percentageScore = (finalScore / 20) * 100;
+
+    // 3. UI Updates
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => { });
     }
     setStep('submitting');
 
-    // 3. Prepare Payload
+    // 4. Prepare Payload
     const payload = {
       name: user.name,
       email: user.email,
       score: finalScore,
-      violations: violations
+      percentage: `${percentageScore}%`, // New Column
+      violations: violations,
+      timestamp: new Date().toLocaleString()
     };
 
     try {
-      // 4. Send as text/plain - this is the "magic" for Google Scripts
+      // 5. Send to Google Sheets
       await fetch(SCRIPT_URL, {
         method: 'POST',
-        mode: 'no-cors', // Tells browser not to wait for a security handshake
+        mode: 'no-cors',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify(payload)
       });
 
-      // 5. Artificial delay to ensure Google finishes writing
       setTimeout(() => {
         setStep('finished');
       }, 2000);
 
     } catch (err) {
       console.error("Submission error:", err);
-      // Proceed to finished so the user isn't stuck
       setStep('finished');
     }
   };
@@ -124,7 +148,7 @@ export default function TestApp() {
     <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4 text-black">
       <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md">
         <h1 className="text-3xl font-bold mb-2 text-blue-600">Cognitive Test</h1>
-        <p className="text-gray-500 mb-6">Tutoring Applicant Assessment</p>
+        <p className="text-gray-500 mb-6">Tutor Assessment</p>
         <div className="space-y-4">
           <input
             className="w-full p-4 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
@@ -157,14 +181,14 @@ export default function TestApp() {
         <ul className="space-y-3 mb-8 text-gray-600">
           <li>• <strong>Duration:</strong> 10 minutes total.</li>
           <li>• <strong>Questions:</strong> 20 randomized problems.</li>
-          <li>• <strong>Cheating:</strong> Tab switching and copying are disabled.</li>
+          <li>• <strong>Cheating:</strong> Tab switching, copying, and right-click are disabled.</li>
           <li>• <strong>Submission:</strong> Results are sent automatically when time ends.</li>
         </ul>
         <button
           onClick={handleStartTest}
           className="w-full bg-green-600 hover:bg-green-700 text-white p-4 rounded-lg font-bold shadow-md transition"
         >
-          Start 10-Minute Test
+          Start Test
         </button>
       </div>
     </div>
@@ -188,7 +212,7 @@ export default function TestApp() {
             {q?.options.map((opt) => (
               <button
                 key={opt}
-                onClick={() => setAnswers({ ...answers, [currentQ]: opt })}
+                onClick={() => setAnswers(prev => ({ ...prev, [currentQ]: opt }))}
                 className={`w-full text-left p-5 border-2 rounded-xl transition-all ${answers[currentQ] === opt
                   ? "border-blue-500 bg-blue-50 shadow-sm"
                   : "border-gray-100 hover:bg-gray-50"
@@ -210,7 +234,7 @@ export default function TestApp() {
 
             {currentQ === 19 ? (
               <button
-                onClick={handleSubmit}
+                onClick={handleFinalSubmission}
                 className="px-10 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-lg transition"
               >
                 Submit Test
@@ -232,16 +256,16 @@ export default function TestApp() {
   if (step === 'submitting') return (
     <div className="flex flex-col items-center justify-center min-h-screen text-black">
       <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-600 mb-4"></div>
-      <p className="text-xl font-bold">Recording your score...</p>
+      <p className="text-xl font-bold">Saving your results securely...</p>
     </div>
   );
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-white text-black p-6 text-center">
       <div className="text-6xl mb-4">🎉</div>
-      <h1 className="text-4xl font-bold text-gray-900">Thank You!</h1>
+      <h1 className="text-4xl font-bold text-gray-900">Test Complete!</h1>
       <p className="mt-4 text-xl text-gray-600 max-w-md">
-        Your test has been submitted. We will review your application and reach out via email.
+        Your answers have been recorded. Our team will review your score and get back to you shortly via email.
       </p>
     </div>
   );
