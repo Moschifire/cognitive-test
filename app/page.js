@@ -2,14 +2,53 @@
 import { useState, useEffect, useRef } from 'react';
 import { questionPool } from '../data/questionBank';
 
-// Fisher-Yates Shuffle to pick 20 random questions from 200
-const shuffleAndPick = (array, count) => {
-  let shuffled = [...array];
+// 1. Generic Fisher-Yates Shuffle
+const shuffle = (array) => {
+  const shuffled = [...array];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  return shuffled.slice(0, count);
+  return shuffled;
+};
+
+// 2. Shuffle and pick a slice
+const shuffleAndPick = (array, count) => {
+  return shuffle(array).slice(0, count);
+};
+
+// 3. Category Quota Configuration
+const CATEGORY_QUOTAS = {
+  "Diagnosing understanding": 4,
+  "Explanations & scaffolding": 4,
+  "Questioning & checks": 3,
+  "Feedback": 3,
+  "Differentiation": 3,
+  "Engagement & confidence": 2,
+  "Professional judgment": 1
+};
+
+/**
+ * Generates a 20-question assessment matching the exact category distribution.
+ * @param {Array} pool - The full questionPool (350 questions)
+ * @param {boolean} interleave - Whether to shuffle the final 20 questions (default: true)
+ * @returns {Array} 20 selected questions
+ */
+export const generateAssessmentQuestions = (pool, interleave = true) => {
+  const selectedQuestions = [];
+
+  for (const [category, count] of Object.entries(CATEGORY_QUOTAS)) {
+    // Filter questions belonging to this specific category
+    const categoryQuestions = pool.filter((q) => q.category === category);
+
+    // Pick the required quota for this category
+    const picked = shuffleAndPick(categoryQuestions, count);
+    selectedQuestions.push(...picked);
+  }
+
+  // Shuffle the final 20 questions so the categories are randomly distributed
+  // throughout the assessment rather than appearing in predictable blocks
+  return interleave ? shuffle(selectedQuestions) : selectedQuestions;
 };
 
 export default function TestApp() {
